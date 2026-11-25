@@ -138,7 +138,7 @@ if not okScroll and mod.log then
 end
 
 -- ------- exports (uniform across arms)
-mod.exports.version = "0.4.2"
+mod.exports.version = "0.4.3"
 mod.exports.generation = V.generation
 mod.exports.active = function()
   return V.option("enabled", true) ~= false and arm.active ~= nil and arm.active()

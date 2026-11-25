@@ -1,7 +1,7 @@
 {
   "id": "free_roam",
   "name": "Free Roam",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -15,5 +15,5 @@
   "permissions": ["engine_internals"],
   "affects_link": false,
   "description": "Omni-directional movement on the ordinary 2D overhead map, across Gen 1, 2 and 3: walk or cycle at any angle instead of one grid tile at a time. Keys and d-pad give the eight compass directions, a left stick gives a full 360, and the pace is the engine's own (bicycle, Gen 3 running shoes and any movement.speed hook carry through). Collision, warps, ledges, boulders, encounters and scripts still run through the engine, per generation. No camera changes. One arm per generation patches that generation's own native movement module directly, never the Gen-1-shaped compat facade.",
-  "github": "Theeohn/Free-Roam"
+  "github": "Theeohn/free_roam"
 }
