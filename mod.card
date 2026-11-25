@@ -1,0 +1,43 @@
+-- Sharing metadata (25-community-and-ecosystem.md 3.2).  Read by tooling
+-- and the manager detail pane; never by the loader's merge.
+return {
+  summary = "Walk or cycle at any angle on the flat 2D map, across Gen 1-3: 8 directions on keys, a full 360 on a stick.",
+  author = "Theeohn",
+  contact = "https://github.com/Theeohn/free_roam",
+  tags = { "movement", "mechanic", "quality-of-life", "controls" },
+  differences = {
+    changed = {
+      "the overworld walk is omni-directional instead of locked to four grid directions: keys and d-pad give the eight compass directions (down+left is a true 45-degree walk), a left stick gives a full 360, at one constant pace whatever the deflection",
+      "Gen 1: continuous, pixel-level free movement -- the body moves at any angle and slides along whatever it grazes",
+      "Gen 2: the same continuous, any-direction, constant-speed body as Gen 1, moved once a frame inside Gold's own loop; collision, the landing pipeline (encounters, warps, coord scripts, trainer sight) and scripts stay the engine's own, and text, menus, surf, ice and Cycling Road stay native",
+      "Gen 3 on foot (walk, running shoes): the same continuous, any-direction, constant-speed body; each cell crossing starts a real native step so every landing (grass, step events, warps, encounters) is the engine's own, and ledges, stairs, warp doors, connections and boulders are handed to the engine whole",
+      "Gen 3 bicycle, surf and dive: the engine's native step with its direction steered (tile-granular), because the bike is a per-frame d-pad state machine",
+      "the bicycle moves the same way at the bike's own speed; Gen 3 running shoes and both Hoenn bikes carry through because the pace is read from the engine, never restated",
+      "the player's facing is still one of the four the sprite sheet has, held steady across a diagonal walk",
+    },
+    added = {
+      "works on all three generations: one arm per generation patches that generation's OWN native movement module directly (Gen 1 OverworldController, Gen 2 World, Gen 3 Player), never the Gen-1-shaped compat facade",
+      "mod options: FREE ROAM (on/off), STICK 360 (on/off), KEY DIAGONALS (on/off)",
+      "exports active(), position() and generation() for other mods",
+    },
+    known = {
+      "the camera is untouched by design -- flat overhead only, no free look, no 3D, on every generation",
+      "Gen 1 diagonals are constant-speed (0.707 px/frame per axis, same total speed as a cardinal, at any deflection) AND smooth: the pixel-snapped camera's judder is removed by sub-pixel smooth scroll -- the whole-pixel part stays in the crisp world canvas and the sub-pixel remainder rides onto the canvas blit as a fractional window-pixel shift (wraps Renderer:blitCanvas; UI stays pixel-locked). Since 0.4.2 Gen 3 on foot uses the same smooth scroll, and on both the world pass is split around the player's draw so the player holds still on screen while the world scrolls (Gen 2 has its own draw-time version). See README, 'Diagonals and feel'",
+      "Gen 3's bicycle, surf and dive differ from the rest in feel: those steps are the engine's own and only their DIRECTION is steered, so a diagonal there reads as an even staircase that averages the true heading. Walking and running shoes on Gen 3, and everything on Gen 1 and Gen 2, are sub-cell. Gen 2 has its own sub-pixel smooth scroll (0.4.0): Gold draws straight to the window, so its camera follows the exact fractional position during the draw only",
+      "Cycling Road (Gen 2) downhill is left entirely to the native forced-movement path; free roam defers there",
+      "Gen 1 (Yellow) has had a first in-game pass; Gen 2 (Crystal) was rebuilt in 0.2.1 onto the continuous model and needs a re-play; Gen 3 on foot was rebuilt in 0.3.0 onto the continuous model and also needs a first play; neither is played on a ROM in the build environment. Verified by compile, a 306-check unit suite (all three arms, incl. the Gen 3 continuous body against a mock tick/finishStep cycle and the bicycle staircase regression), modkit validate and modkit lint. Each arm fails safe to the native grid walk. gen2check/gen3check report 'will not work', but that static scan cannot follow a mod that loads per-generation code only on the matching boot -- it flags this mod's Gen-1-only file on Gen 2/3 boots where that file never loads, and it fails the proven multi-gen reference (notquiteog fork) the same way and far harder. See README, 'Generations and how this was verified'",
+      "scripted walks, ledge hops and spinner slides play out as the native moves they are; free control resumes when they land",
+    },
+  },
+  credits = {
+    { who = "absol89 (DramaticShapeVoxelMod) and the notquiteog fork",
+      for_ = "demonstrating that a mod can bypass the compat facade and patch each generation's native movement module directly; this mod is an independent, camera-free reimplementation of that idea, not a copy of their code" },
+    { who = "BOIS CLUB GAMES, LLC",
+      for_ = "the Pokemon Gen 1 Recompilation Project this is based on (https://github.com/bryanthaboi/gen1recomp)" },
+    { who = "pret (pokered / pokecrystal / pokeemerald / pokefirered)",
+      for_ = "the disassemblies the engine's per-generation movement, collision and landing behaviour came from" },
+  },
+  compat = { engine = ">=0.1.69 <3.0.0", modApi = 2,
+             games = { "red", "blue", "yellow", "gold", "silver", "crystal",
+                       "ruby", "sapphire", "emerald", "firered", "leafgreen" } },
+}
