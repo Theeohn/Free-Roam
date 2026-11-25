@@ -20,6 +20,7 @@ local M = {}
 
 function M.install()
   local Collision = require("src.world.Collision")
+  local Runtime = require("src.mods.Runtime")
 
   -- the free position (player centre, world px) and the px/py we last wrote.
   -- If they differ from the player's, something else -- a warp, a script, a
@@ -46,8 +47,7 @@ function M.install()
   -- the same questions Collision.canMove asks for a grid step, asked of one
   -- cell; the player's OWN cell never blocks (it must always be free to leave
   -- wherever it stands). Returns "bounds" | "tile" | "entity" or nil.
-  local function blockedCell(state, p, cx, cy)
-    if cx == p.cellX and cy == p.cellY then return nil end
+  local function cellVerdict(state, p, cx, cy)
     local map = state.map
     if not map:inBounds(cx, cy) then return "bounds" end
     if not map:isWalkableCell(cx, cy) then
@@ -59,6 +59,30 @@ function M.install()
     end
     if Collision.occupied(state.entities, cx, cy, p) then return "entity" end
     return nil
+  end
+
+  -- the movement.collision chain sees the boolean; a wrapper that flips it
+  -- rewrites ctx.reason to say why (the engine's own reasons are bounds /
+  -- tile / entity), so the hook stays a single-value middleware -- the exact
+  -- shape Collision.canMove builds for a grid step, built here for one cell
+  -- of the free walk's own sliding check. A mod that hooks that chain (a
+  -- walk-through-walls cheat, a rule that adds a block) governs the free
+  -- walk the same way it already governs the grid walk.
+  local function passthrough(allowed) return allowed end
+
+  local function blockedCell(state, p, cx, cy)
+    if cx == p.cellX and cy == p.cellY then return nil end
+    local why = cellVerdict(state, p, cx, cy)
+    if not Runtime.wantsHook("movement.collision") then return why end
+    local dx, dy = cx - p.cellX, cy - p.cellY
+    local dir = (dx == 1 and "right") or (dx == -1 and "left")
+      or (dy == 1 and "down") or (dy == -1 and "up") or nil
+    local ctx = { map = state.map, mover = p, dir = dir,
+                  fromX = p.cellX, fromY = p.cellY, toX = cx, toY = cy,
+                  reason = why }
+    local allowed = Runtime.call("movement.collision", passthrough, why == nil, ctx)
+    if allowed then return nil end
+    return ctx.reason or why
   end
 
   local function heading(input)

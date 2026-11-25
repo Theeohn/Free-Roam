@@ -239,26 +239,20 @@ function M.install()
 
   -- can the engine's cell verdict let the body into (cx, cy)? nil = yes,
   -- otherwise the reason it refused
-  local function blockedCell(world, p, cx, cy)
-    if cx == p.cellX and cy == p.cellY then return nil end
+  local function cellVerdict(world, p, cx, cy, dir)
     local map = world.map
     if not map:inBounds(cx, cy) then return "bounds" end
     local walkable = map:isWalkable(cx, cy)
     local permitted = true
-    if walkable and Permissions and type(Permissions.stepPermitted) == "function" then
-      local dx, dy = cx - p.cellX, cy - p.cellY
-      local dir = (dx == 1 and "right") or (dx == -1 and "left")
-        or (dy == 1 and "down") or (dy == -1 and "up")
-      if dir then
-        local ok, allowed = pcall(Permissions.stepPermitted,
-          function(x, y)
-            if type(world.cellCollisionAcross) == "function" then
-              return world:cellCollisionAcross(map, x, y)
-            end
-            return map:cellCollision(x, y)
-          end, p.cellX, p.cellY, dir)
-        permitted = (not ok) or allowed ~= false
-      end
+    if walkable and dir and Permissions and type(Permissions.stepPermitted) == "function" then
+      local ok, allowed = pcall(Permissions.stepPermitted,
+        function(x, y)
+          if type(world.cellCollisionAcross) == "function" then
+            return world:cellCollisionAcross(map, x, y)
+          end
+          return map:cellCollision(x, y)
+        end, p.cellX, p.cellY, dir)
+      permitted = (not ok) or allowed ~= false
     end
     if not (walkable and permitted) then return "tile" end
     -- NPCs and entities block as a wall; the body is not a sprite
@@ -272,6 +266,33 @@ function M.install()
       end
     end
     return nil
+  end
+
+  -- the movement.collision chain sees the boolean; a wrapper that flips it
+  -- rewrites ctx.reason to say why -- the same shape Gen2's own Player:tryMove
+  -- builds for a grid step (src/world/gen2/Player.lua), built here for one
+  -- cell of the free walk's own sliding check. A mod that hooks that chain (a
+  -- walk-through-walls cheat, a rule that adds a block) governs the free walk
+  -- the same way it already governs the grid walk.
+  local function passthrough(allowed) return allowed end
+
+  local function blockedCell(world, p, cx, cy)
+    if cx == p.cellX and cy == p.cellY then return nil end
+    local dx, dy = cx - p.cellX, cy - p.cellY
+    local dir = (dx == 1 and "right") or (dx == -1 and "left")
+      or (dy == 1 and "down") or (dy == -1 and "up") or nil
+    local why = cellVerdict(world, p, cx, cy, dir)
+    if not (Runtime and type(Runtime.wantsHook) == "function"
+       and Runtime.wantsHook("movement.collision") and type(Runtime.call) == "function") then
+      return why
+    end
+    local ctx = { map = world.map, mover = p, dir = dir,
+                  fromX = p.cellX, fromY = p.cellY, toX = cx, toY = cy,
+                  reason = why }
+    local ok, allowed = pcall(Runtime.call, "movement.collision", passthrough, why == nil, ctx)
+    if not ok then return why end
+    if allowed then return nil end
+    return ctx.reason or why
   end
 
   local function pause(world)
