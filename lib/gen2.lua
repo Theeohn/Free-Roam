@@ -450,13 +450,19 @@ function M.install()
     ensureWalkPhase(p)
 
     p.facing = C.quantise(hx, hy, p.facing, C.TIE)
-    local pace = C.pace(framesPerCell(world))
+    -- TRUE PACE: walking slows to two thirds; the bicycle and surf never do
+    local biking = FieldMoves and type(FieldMoves.isBiking) == "function"
+      and FieldMoves.isBiking(world.playerState) or false
+    local foot = C.footFactor(V.option("truePace", false) == true,
+      not biking and not surfing(world))
+    local pace = C.pace(framesPerCell(world)) * foot
     local dx, dz = hx * pace, hy * pace
     local ox, oz = world._frX, world._frZ
 
     local function blocked(cx, cy) return blockedCell(world, p, cx, cy) end
     local nx, hitX = C.slideX(ox, oz, dx, RADIUS, blocked)
     local nz, hitZ = C.slideZ(nx, oz, dz, RADIUS, blocked)
+    if foot ~= 1 then nx, nz = C.tidy(nx), C.tidy(nz) end
     world._frX, world._frZ = nx, nz
 
     local mx, mz = nx - ox, nz - oz
@@ -467,7 +473,10 @@ function M.install()
       -- the leg clock and the foot flip share one rate: slower on a diagonal
       -- (see core C.animRate), so the foot still changes once per leg cycle
       local rate = C.animRate(hx, hy)
-      world._frAnimAcc = (world._frAnimAcc or 0) + rate
+      -- the leg clock ticks per frame, so TRUE PACE slows it with the body;
+      -- the foot flip below already runs on distance, which slowed by itself
+      world._frAnimAcc = (world._frAnimAcc or 0) + rate * foot
+      if foot ~= 1 then world._frAnimAcc = C.tidy(world._frAnimAcc) end
       if world._frAnimAcc >= 1 then
         world._frAnimAcc = world._frAnimAcc - 1
         p.animClock = (p.animClock or 0) + 1
@@ -669,6 +678,25 @@ function M.install()
   end
 
   World.freeRoamHook = true
+
+  -- TRUE PACE for the party follower: Gold's follower walks each cell over
+  -- the player's step length, read as the step starts, so hand it the slowed
+  -- one for its own update. Its legs run on its step's own progress, so they
+  -- slow with it. Only while the free walk is on and the player is on foot.
+  local GenFollower = optional("src.world.gen2.Follower")
+  if GenFollower and type(GenFollower.update) == "function"
+     and not GenFollower.freeRoamPaceHook then
+    GenFollower.update = C.paceFollowerUpdate(GenFollower.update,
+      { "stepFrames" },
+      function(_, _game, world)
+        local biking = FieldMoves and type(FieldMoves.isBiking) == "function"
+          and FieldMoves.isBiking(world.playerState) or false
+        return optionOn() and C.footFactor(V.option("truePace", false) == true,
+          not biking and not surfing(world)) ~= 1
+      end,
+      function(_, world) return world and world.player end)
+    GenFollower.freeRoamPaceHook = true
+  end
 
   M.active = function() return optionOn() end
   M.position = function() return nil end

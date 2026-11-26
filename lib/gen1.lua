@@ -243,7 +243,10 @@ function M.install()
     facing = quantise(dx, dy, facing or p.facing)
     p.facing = facing
 
-    local pace = paceOf(p, facing)
+    -- TRUE PACE: walking slows to two thirds; the bicycle and surf never do
+    local foot = C.footFactor(V.option("truePace", false) == true,
+      not (Game.save and Game.save.onBike) and not p.surfing)
+    local pace = paceOf(p, facing) * foot
     -- Constant speed in every direction (unit heading * pace): a diagonal moves
     -- 0.707 px/frame per axis, the same total speed as a cardinal, whatever the
     -- stick deflection. The diagonal JUDDER this used to cause is fixed at the
@@ -254,13 +257,16 @@ function M.install()
     local hitX, hitY
     pos.x, hitX = C.slideX(pos.x, pos.z, vx, C.RADIUS, blocked)
     pos.z, hitY = C.slideZ(pos.x, pos.z, vy, C.RADIUS, blocked)
+    if foot ~= 1 then pos.x, pos.z = C.tidy(pos.x), C.tidy(pos.z) end
 
     p.bumpFrames = 2
 
     -- Leg cadence. The engine's wall-bonk clock ticks animClock once per frame
     -- while bumpFrames is set; on a diagonal let only a share of those ticks
     -- through, by cancelling the engine's tick on the others (speed untouched).
-    animAcc = animAcc + C.animRate(dx, dy)
+    -- (slowed by the same TRUE PACE factor, so the legs match the body)
+    animAcc = animAcc + C.animRate(dx, dy) * foot
+    if foot ~= 1 then animAcc = C.tidy(animAcc) end
     if animAcc >= 1 then
       animAcc = animAcc - 1
     elseif (p.animClock or 0) > 0 then
@@ -420,6 +426,35 @@ function M.install()
 
   -- live state the entry point exports read, plus the pure pieces the suite
   -- drives headlessly
+  -- TRUE PACE for the party follower (Yellow's Pikachu, or a follower mod's
+  -- companion, which rides the same seam): it walks each cell over the
+  -- player's step length, read as the step starts, so hand it the slowed one
+  -- for its own update and thin its per-frame leg clock to match. Only while
+  -- the free walk is on and the player is on foot, exactly when the player
+  -- itself is slowed.
+  local okFol, Follower = pcall(require, "src.world.PikachuFollower")
+  if okFol and type(Follower) == "table" and type(Follower.update) == "function"
+     and not Follower.freeRoamPaceHook then
+    local function slowNow(p)
+      local Game = require("src.core.Game")
+      return V.option("enabled", true) ~= false
+        and C.footFactor(V.option("truePace", false) == true,
+          not (Game.save and Game.save.onBike) and not p.surfing) ~= 1
+    end
+    local paced = C.paceFollowerUpdate(Follower.update,
+      { "stepFramesCur", "stepFrames" }, slowNow,
+      function(_, ow) return ow and ow.player end)
+    local thinLegs = C.newLegThinner()
+    Follower.update = function(game, ow, ...)
+      local out = { paced(game, ow, ...) }
+      local p = ow and ow.player
+      local npc = type(Follower.current) == "function" and Follower.current(ow) or nil
+      thinLegs(npc, p ~= nil and slowNow(p))
+      return (table.unpack or unpack)(out)
+    end
+    Follower.freeRoamPaceHook = true
+  end
+
   M.active = function() return pos ~= nil end
   M.position = function()
     if not pos then return nil end

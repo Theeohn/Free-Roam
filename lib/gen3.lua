@@ -433,7 +433,12 @@ function M.install()
   local function moveBody(game, input, b, hx, hz)
     local run = wantsRun(input)
     local frames = framesFor(run, game, C.cardinal(hx, hz), input)
-    local pace = C.pace(frames)
+    -- TRUE PACE: walking and the running shoes slow to two thirds; surf and
+    -- dive (which this body also drives) never do. The leg clock below runs
+    -- on distance, so it slows with the body by itself.
+    local foot = C.footFactor(V.option("truePace", false) == true,
+      not (Player.surfing or Player.underwater))
+    local pace = C.pace(frames) * foot
     b.moving = false
     b.run = run
     b.animRate = C.animRate(hx, hz)
@@ -450,6 +455,7 @@ function M.install()
     -- x axis
     local started = false           -- a native step began this frame
     local nx, hitX = C.slideX(b.x, b.z, dx, RADIUS, blocked)
+    if foot ~= 1 then nx = C.tidy(nx) end
     if math.floor(nx / CELL) ~= Player.cellX then
       local dir = nx > b.x and "right" or "left"
       local kind = attempt(game, dir, run, input)
@@ -468,6 +474,7 @@ function M.install()
     -- started one, z keeps its motion (under a pixel past its line) and the
     -- next frame's landing lets its own crossing start, so no speed is lost.
     local nz, hitZ = C.slideZ(b.x, b.z, dz, RADIUS, blocked)
+    if foot ~= 1 then nz = C.tidy(nz) end
     if math.floor(nz / CELL) ~= Player.cellY then
       if not started then
         local dir = nz > b.z and "down" or "up"
@@ -710,6 +717,25 @@ function M.install()
   end
 
   Player.freeRoamHook = true
+
+  -- TRUE PACE for the party follower (a follower mod's companion): it walks
+  -- each cell over Player.stepFrames, read as the step starts, so hand it the
+  -- slowed one for its own update. Its walk frame is just moving / still, so
+  -- nothing else needs slowing. Only while the free walk is on and the player
+  -- is on foot (not the bicycle, surf or dive), exactly when the player is.
+  local GenFollower = optional("src.world.game3.Follower")
+  if GenFollower and type(GenFollower.update) == "function"
+     and not GenFollower.freeRoamPaceHook then
+    GenFollower.update = C.paceFollowerUpdate(GenFollower.update,
+      { "stepFrames" },
+      function()
+        return enabled() and not Player.biking
+          and C.footFactor(V.option("truePace", false) == true,
+            not (Player.surfing or Player.underwater)) ~= 1
+      end,
+      function() return Player end)
+    GenFollower.freeRoamPaceHook = true
+  end
 
   M.active = function() return enabled() end
   M.position = function()

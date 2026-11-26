@@ -163,6 +163,100 @@ function C.pace(framesPerCell)
   return 16 / frames
 end
 
+-- TRUE PACE (option, default off): on foot, walk and run at two thirds of the
+-- engine's pace. Two thirds, not a round percentage, because it is the
+-- slowdown that keeps every on-foot speed on a short, exact pixel rhythm:
+-- the walk's 16 frames a cell become exactly 24 (0.667 px a frame, a steady
+-- 1-1-0 whole-pixel pattern) and the running shoes' 8 become exactly 12
+-- (1.333 px a frame, 1-1-2). Every cell then takes the same whole number of
+-- frames, so each landing falls at the same point in the rhythm. The bicycle
+-- and surf are never slowed: on Gen 2 and 3 those are the engine's own steps.
+C.TRUE_PACE = 2 / 3
+
+-- the on-foot pace factor: TRUE_PACE when the option is on and the player is
+-- walking or running, 1 otherwise
+function C.footFactor(on, onFoot)
+  if on and onFoot then return C.TRUE_PACE end
+  return 1
+end
+
+-- Two thirds has no exact binary form, so adding it frame after frame drifts a
+-- hair under the whole number it should hit (40 + 12 * 2/3 lands at
+-- 47.999999999999993, not 48), and a cell crossing or a leg tick would then
+-- slip a frame late now and then. Snapping a value within that rounding dust
+-- of a whole number back onto it keeps the rhythm exact: every whole pixel,
+-- and so every cell line, is reached on its own frame. Anything genuinely
+-- fractional (a diagonal, a part-way step) is far outside the window.
+-- a step length (frames a cell) at TRUE PACE: 16 -> 24, 8 -> 12. The party
+-- follower walks each cell over the player's step length, so it is handed
+-- this one to stay in step with the slowed player.
+function C.slowFrames(frames)
+  local f = tonumber(frames) or 16
+  return math.max(1, math.floor(f / C.TRUE_PACE + 0.5))
+end
+
+-- TRUE PACE for the party follower. Every generation's native follower reads
+-- the player's step length the moment it starts a step (and halves it while
+-- it is more than a cell behind), so for the follower's own update only, the
+-- player carries the slowed length; the real one is put straight back, even
+-- if the update errors. Nothing else ever sees the swap, and the follower's
+-- own position is never written. `fields` names the step-length fields this
+-- generation's follower reads; `slowNow(...)` says whether TRUE PACE applies
+-- this frame; `getPlayer(...)` finds the player from the update's arguments.
+function C.paceFollowerUpdate(inner, fields, slowNow, getPlayer)
+  return function(...)
+    local p = getPlayer(...)
+    if not (p and slowNow(p, ...)) then return inner(...) end
+    local saved = {}
+    local base = 16
+    for i = #fields, 1, -1 do
+      local v = tonumber(p[fields[i]])
+      if v then base = v end
+    end
+    for i, k in ipairs(fields) do saved[i] = p[k] end
+    local slow = C.slowFrames(base)
+    for _, k in ipairs(fields) do p[k] = slow end
+    local out = { pcall(inner, ...) }
+    for i, k in ipairs(fields) do p[k] = saved[i] end
+    if not out[1] then error(out[2], 0) end
+    return (table.unpack or unpack)(out, 2)
+  end
+end
+
+-- Gen 1's NPC legs run on a per-frame clock (animClock), not on the step, so
+-- a follower taking 24 frames a cell would pump its legs half as fast again
+-- as its body. This thins the ticks the same way the player's are thinned:
+-- of every three, one is cancelled. Call once a frame, after the follower's
+-- update; it counts the ticks since the last call, so it also catches the
+-- engine's own NPC loop and the step's burned first frame.
+function C.newLegThinner()
+  local lastNpc, lastClock, acc = nil, 0, 0
+  return function(npc, slow)
+    if not npc then lastNpc = nil return end
+    if npc ~= lastNpc then
+      lastNpc, lastClock, acc = npc, npc.animClock or 0, 0
+      return
+    end
+    local clock = npc.animClock or 0
+    local ticks = clock - lastClock
+    if slow and ticks > 0 then
+      for _ = 1, ticks do
+        acc = C.tidy(acc + C.TRUE_PACE)
+        if acc >= 1 then acc = acc - 1 else clock = clock - 1 end
+      end
+      npc.animClock = clock
+    end
+    lastClock = clock
+  end
+end
+
+local DUST = 1e-7
+function C.tidy(v)
+  local r = math.floor(v + 0.5)
+  if math.abs(v - r) < DUST then return r end
+  return v
+end
+
 -- The walk-cycle (leg) cadence on a diagonal. A diagonal covers the same
 -- ground per frame as a cardinal, but the sprite sheet has no diagonal frames,
 -- so legs cycling at the full rate read as faster than the body is moving. The
