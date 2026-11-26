@@ -1,0 +1,38 @@
+-- Sharing metadata.  Read by tooling and the manager detail pane; never by
+-- the loader's merge.
+return {
+  summary = "Walk, cycle and surf in any direction on the overhead map in Gen 1, 2 and 3.",
+  author = "Theeohn",
+  contact = "",
+  tags = { "movement", "overworld", "controller", "quality-of-life" },
+  differences = {
+    changed = {
+      "overworld walking, running, surfing and diving (and cycling on Gen 1/2) move smoothly in any direction instead of one tile at a time; keys and d-pad give eight directions, a left stick a full 360",
+      "speed is the game's own: the bicycle, Gen 3's running shoes and any movement.speed mod carry through; stick deflection sets only the direction",
+      "walls, warps, ledges, boulders, grass, encounters, trainers and scripts still run on the game's own per-tile rules; the player slides along walls",
+      "the screen scrolls smoothly on diagonals with the player held steady (Gen 1 and Gen 3 by canvas, Gen 2 by its own draw)",
+      "crossing a map edge (town to route) keeps the player on the line they were walking; doors and warps unchanged",
+      "ice, currents, spinners, slides, waterfalls and whirlpools are entered through the game's own tile step and run tile by tile as normal",
+    },
+    added = {
+      "FREE ROAM: ON / OFF -- OFF restores the normal grid walk on the next frame",
+      "STICK 360: ON / OFF -- OFF makes the stick act like a d-pad",
+      "KEY DIAGONALS: ON / OFF -- OFF limits keys and d-pad to four ways, still off-grid",
+      "TOUCHPAD: DEFAULT / DIAGONAL / 360 -- the phone on-screen d-pad as four, eight or any direction",
+    },
+    known = {
+      "Gen 3 bicycle still steps a tile at a time (any direction works, as a zig-zag)",
+      "forced tiles and Cycling Road's downhill slope keep the game's normal tile-by-tile movement; they act as a wall until pushed straight into",
+      "custom touch skins keep their own d-pad handling; TOUCHPAD applies to the built-in on-screen d-pad",
+      "works with WoobleView (gen3-hd-sprites): its screen-resolution field sprites scroll with the world",
+      "no camera changes: the view stays the flat overhead one",
+    },
+  },
+  credits = {
+    { who = "absol89", for_ = "DramaticShapeVoxelMod (https://github.com/absol89/DramaticShapeVoxelMod) and Gen2Recomped-DramaticShapes (https://github.com/absol89/Gen2Recomped-DramaticShapes), whose free-walk movement Claude studied to work out how to make Free Roam work on Gen 3" },
+    { who = "BOIS CLUB GAMES, LLC", for_ = "the Pokemon Gen 1 Recompilation Project this is built for (https://github.com/bryanthaboi/gen1recomp)" },
+  },
+  compat = { engine = ">=0.1.69 <3.0.0", modApi = 2,
+             games = { "red", "blue", "yellow", "gold", "silver", "crystal",
+                       "ruby", "sapphire", "emerald", "firered", "leafgreen" } },
+}

@@ -1,4 +1,4 @@
--- FREE ROAM: omni-directional movement on the ordinary 2D overhead map, for
+-- Free Roam: omni-directional movement on the ordinary 2D overhead map, for
 -- Generation 1, 2 and 3 of the recomp.
 --
 -- The engine walks a grid -- a fixed number of frames per cell, four
@@ -78,6 +78,8 @@ mod.options:define({
   { key = "enabled",   label = "FREE ROAM",     type = "toggle", default = true },
   { key = "analog",    label = "STICK 360",     type = "toggle", default = true },
   { key = "diagonals", label = "KEY DIAGONALS", type = "toggle", default = true },
+  { key = "touchpad",  label = "TOUCHPAD",      type = "choice", default = "default",
+    choices = { { "DEFAULT", "default" }, { "DIAGONAL", "diagonal" }, { "360", "360" } } },
 })
 
 function V.option(key, default)
@@ -130,6 +132,12 @@ if not ok then
   if mod.log then mod.log("free_roam install failed: " .. tostring(err)) end
 end
 
+-- the phone d-pad as an 8-way / 360 heading (TOUCHPAD option)
+local okTouch, errTouch = pcall(function() return V.require("touch").install() end)
+if not okTouch and mod.log then
+  mod.log("free_roam touch install failed: " .. tostring(errTouch))
+end
+
 -- sub-pixel smooth scroll (Gen 1 only in effect; a no-op where no remainder is
 -- reported). Guarded: a render-wrap failure must never break movement.
 local okScroll, errScroll = pcall(function() return V.require("smoothscroll").install() end)
@@ -138,7 +146,7 @@ if not okScroll and mod.log then
 end
 
 -- ------- exports (uniform across arms)
-mod.exports.version = "0.4.3"
+mod.exports.version = "0.5.1"
 mod.exports.generation = V.generation
 mod.exports.active = function()
   return V.option("enabled", true) ~= false and arm.active ~= nil and arm.active()
