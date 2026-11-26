@@ -30,9 +30,12 @@
 -- Hand-offs to native, so nothing the engine owns is re-implemented:
 --   * scripts, menus, text, field moves, fishing, headbutt, the map-setup chain
 --     and the Cycling Road downhill all keep the native loop (free defers).
---   * Surf stays native, and so do forced tiles (ice, currents, whirlpools,
---     forced doors): the engine's own permission and forced-direction logic
---     owns those cells.
+--   * Surfing is free like walking (the water's own permissions, the surf
+--     step's own pace, stepping onto land ends it as the cart does). Forced
+--     tiles (ice, currents, whirlpools, forced doors) stay native: the body
+--     treats them as a wall, and a firm push lines it up and hands the step
+--     to the engine, whose own permission and forced-direction logic owns
+--     those cells.
 --   * a blocked push into a ledge, a map edge (connection) or a boulder asks the
 --     engine's own handler once (tryLedgeJump / tryConnection / tryPushBoulder).
 --     If it took the push, free motion pauses briefly while the engine animates
@@ -130,6 +133,21 @@ function M.install()
       or test("isIce") or test("isWhirlpool")
   end
 
+  -- the same rules for any cell (the body's next one)
+  local function forcedAt(world, cx, cy)
+    if not Permissions or not world.map then return false end
+    local ok, coll = pcall(world.map.cellCollision, world.map, cx, cy)
+    if not ok or coll == nil then return false end
+    for _, name in ipairs({ "currentDirection", "isIce", "isWhirlpool" }) do
+      local f = Permissions[name]
+      if type(f) == "function" then
+        local okT, out = pcall(f, coll)
+        if okT and out then return true end
+      end
+    end
+    return false
+  end
+
   -- Everything that must stay native, checked without moving anything.
   local function freeAllowed(world)
     if not optionOn() then return false end
@@ -141,7 +159,6 @@ function M.install()
       return false
     end
     if callOr(world, "downhill", false) then return false end
-    if surfing(world) then return false end
     if forcedHere(world) then return false end
     return true
   end
@@ -165,7 +182,7 @@ function M.install()
         function(v) return v end, frames, {
           onBike = FieldMoves and FieldMoves.isBiking
             and FieldMoves.isBiking(world.playerState) or false,
-          surfing = false,
+          surfing = surfing(world),
           downhill = false,
           playerState = world.playerState,
           player = p,
@@ -242,7 +259,16 @@ function M.install()
   local function cellVerdict(world, p, cx, cy, dir)
     local map = world.map
     if not map:inBounds(cx, cy) then return "bounds" end
-    local walkable = map:isWalkable(cx, cy)
+    local walkable
+    if surfing(world) then
+      -- .CheckSurfPerms: water, or dry land to step out onto
+      local okS, kind = pcall(function()
+        return Permissions and Permissions.surfable(map:cellCollision(cx, cy))
+      end)
+      walkable = okS and kind ~= nil
+    else
+      walkable = map:isWalkable(cx, cy)
+    end
     local permitted = true
     if walkable and dir and Permissions and type(Permissions.stepPermitted) == "function" then
       local ok, allowed = pcall(Permissions.stepPermitted,
@@ -255,6 +281,7 @@ function M.install()
       permitted = (not ok) or allowed ~= false
     end
     if not (walkable and permitted) then return "tile" end
+    if forcedAt(world, cx, cy) then return "forced" end
     -- NPCs and entities block as a wall; the body is not a sprite
     local npc = callOr(world, "npcAt", nil, cx, cy)
     if npc and npc ~= p and not npc.passable then return "entity" end
@@ -295,6 +322,51 @@ function M.install()
     return ctx.reason or why
   end
 
+  -- start the engine's step (already begun) where the body stood along it,
+  -- and draw it there this frame
+  local function startAt(p, along)
+    if not (p.moving and along and along > 0) then return end
+    local frames = p.stepFrames or WALK_FRAMES
+    local dx = (p.targetX or p.cellX) - p.cellX
+    local dy = (p.targetY or p.cellY) - p.cellY
+    local span = math.max(math.abs(dx), math.abs(dy), 1)
+    p.progress = math.max(0, math.min(frames - 1, math.floor(along * frames / (16 * span))))
+    local adv = math.floor(p.progress * 16 * span / frames)
+    p.px = p.cellX * 16 + (dx / span) * adv
+    p.py = p.cellY * 16 + (dy / span) * adv
+  end
+
+  local function sideways(dir) return dir == "left" or dir == "right" end
+
+  -- The seam: the engine crosses a map edge by loading the next map and
+  -- parking the player one cell before the landing cell, mid-step, on the
+  -- grid line. The body's sideways offset rides that step and the body is
+  -- rebuilt at the same offset when it lands, so leaving a town for a route
+  -- never snaps the player onto a gridline.
+  local function applySeam(world)
+    local s = world._frSeam
+    local p = world.player
+    if not (s and p) then return end
+    if p.moving then
+      if p.targetX ~= s.tx or p.targetY ~= s.ty then world._frSeam = nil; return end
+      local whole = math.floor(s.perp + 0.5)
+      if sideways(s.dir) then p.py = p.cellY * 16 + whole
+      else p.px = p.cellX * 16 + whole end
+      world._frTrueX, world._frTrueY = nil, nil
+      return
+    end
+    world._frSeam = nil
+    if p.cellX ~= s.tx or p.cellY ~= s.ty then return end
+    local x, z = p.cellX * 16 + 8, p.cellY * 16 + 8
+    if sideways(s.dir) then z = z + s.perp else x = x + s.perp end
+    world._frX, world._frZ = x, z
+    world._frMap = world.map and world.map.id
+    local rx, ry = math.floor(x - 8 + 0.5), math.floor(z - 8 + 0.5)
+    p.px, p.py = rx, ry
+    world._frPx, world._frPy = rx, ry
+    world._frTrueX, world._frTrueY = x - 8, z - 8
+  end
+
   local function pause(world)
     world._frPause = PAUSE_FRAMES
     world._frMoved = false
@@ -303,10 +375,27 @@ function M.install()
 
   -- a firm push into a ledge, a map edge or a boulder: hand it to the engine's
   -- own handler once; true means the engine took it
-  local function pushSpecial(world, p, dir, why)
+  local function pushSpecial(world, p, dir, why, along, perp)
     if not dir then return false end
     if why == "bounds" and callOr(world, "tryConnection", false, dir) then
+      if p.moving and p.targetX then
+        startAt(p, along)
+        world._frSeam = { dir = dir, perp = perp or 0, tx = p.targetX, ty = p.targetY }
+        applySeam(world)
+      end
       return true
+    end
+    if why == "forced" then
+      -- the engine's own step onto the forced tile; its ice / current logic
+      -- carries the player from there
+      p.facing = dir
+      p.turnArmed = false
+      local result = callOr(world, "movePlayer", nil, dir)
+      if result == "moved" and p.moving then
+        startAt(p, along)
+        return true
+      end
+      return false
     end
     if why == "tile" and callOr(world, "tryLedgeJump", false, dir) then
       return true
@@ -321,7 +410,31 @@ function M.install()
     return false
   end
 
+  -- surfing onto dry land ends the surf, the way the cart's .ExitWater does
+  -- (GetOutOfWater, then PlayMapMusic swaps the surf theme back)
+  local function exitWaterOnto(world, cx, cy)
+    if not (surfing(world) and Permissions and type(Permissions.surfable) == "function") then
+      return
+    end
+    local ok, kind = pcall(function()
+      return Permissions.surfable(world.map:cellCollision(cx, cy))
+    end)
+    if not (ok and kind == "land") then return end
+    if type(world.applyPlayerState) == "function" and FieldMoves then
+      pcall(world.applyPlayerState, world, FieldMoves.PLAYER_NORMAL)
+    end
+    local data = world.game and world.game.data
+    if data and data.audio and data.audio.runtime then
+      pcall(function()
+        local Music = require("src.core.Music")
+        Music.playMap(data, world.map.id, nil, surfing(world), nil,
+          type(world.mapMusicSong) == "function" and world:mapMusicSong(world.map.id) or nil)
+      end)
+    end
+  end
+
   local function crossCell(world, p, cx, cy)
+    exitWaterOnto(world, cx, cy)
     p.cellX, p.cellY = cx, cy
     local held = world.heldDir
     world.heldDir = p.facing
@@ -392,9 +505,37 @@ function M.install()
       why, dir = hitZ, dz > 0 and "down" or "up"
     end
     if why then
+      local sx = (dir == "right" and 1) or (dir == "left" and -1) or 0
+      local sy = (dir == "down" and 1) or (dir == "up" and -1) or 0
+      local ccx, ccz = p.cellX * 16 + 8, p.cellY * 16 + 8
+      if why == "forced" then
+        -- along the edge slides; a push (nearly) straight in lines the body
+        -- up with the cell (a glide), then hands the step to the engine
+        local side = math.abs(sx ~= 0 and hy or hx)
+        local sideHit
+        if sx ~= 0 then sideHit = hitZ else sideHit = hitX end
+        if side > 0.38 and not sideHit then return end
+        local off = (sx ~= 0) and (ccz - world._frZ) or (ccx - world._frX)
+        local step = math.min(math.abs(off), pace)
+        if sx ~= 0 then world._frZ = world._frZ + (off > 0 and step or -step)
+        else world._frX = world._frX + (off > 0 and step or -step) end
+        local gx, gz = world._frX, world._frZ
+        p.px, p.py = math.floor(gx - 8 + 0.5), math.floor(gz - 8 + 0.5)
+        world._frPx, world._frPy = p.px, p.py
+        world._frTrueX, world._frTrueY = gx - 8, gz - 8
+        if math.abs(off) - step > 0.05 then return end
+        if sx ~= 0 then world._frZ = ccz else world._frX = ccx end
+      end
       p.facing = dir
-      if moved < pace * 0.5 and pushSpecial(world, p, dir, why) then
-        pause(world)
+      local along = (sx ~= 0) and (world._frX - ccx) * sx or (world._frZ - ccz) * sy
+      local perp = (sx ~= 0) and (world._frZ - ccz) or (world._frX - ccx)
+      if (moved < pace * 0.5 or why == "forced") and pushSpecial(world, p, dir, why, along, perp) then
+        if why == "bounds" or why == "forced" then
+          world._frX = nil          -- the engine's step now; re-adopt after it
+          world._frMoved, p._frMoved = false, false
+        else
+          pause(world)
+        end
       end
     end
   end
@@ -442,6 +583,14 @@ function M.install()
     end
 
     local out = { innerStep(self, ...) }
+
+    -- riding a map-connection step: keep the body's line, nothing else
+    if self._frSeam then
+      applySeam(self)
+      if self.player then self.player._frMoved = false end
+      self._frMoved = false
+      return unpackResults(out)
+    end
 
     if wantFree and self.player and not self.player.moving and freeAllowed(self) then
       tick(self, heading[1], heading[2])

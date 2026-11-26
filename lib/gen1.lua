@@ -30,6 +30,7 @@ function M.install()
   local facing = nil
   local animAcc = 0       -- leg-cadence share carried between frames
   local layerPlayer = nil -- the player the free walk last drove
+  local seam = nil        -- a map-connection step the free walk rides
 
   local function adopt(p)
     pos = { x = p.px + 8, z = p.py + 8 }
@@ -70,9 +71,40 @@ function M.install()
   -- walk the same way it already governs the grid walk.
   local function passthrough(allowed) return allowed end
 
+  -- Cells the engine moves the player through on its own grid: the spinner
+  -- arrows (Viridian Gym, Rocket Hideout) and Seafoam's surf currents. The
+  -- free body treats them as a wall; a firm push hands the step to the
+  -- engine, which then runs the arrow or current exactly as the cart does.
+  local function inList(list, cx, cy)
+    for _, c in ipairs(list or {}) do
+      if c.x == cx and c.y == cy then return true end
+    end
+    return false
+  end
+
+  local function forcedCell(state, p, cx, cy)
+    local Game = require("src.core.Game")
+    local field = Game.data and Game.data.field
+    if not field or not state.map then return false end
+    local id = state.map.id
+    if field.spinners and inList(field.spinners[id], cx, cy) then return true end
+    local sf = field.seafoam and field.seafoam[id]
+    if sf and p.surfing then
+      if inList(sf.currents, cx, cy) then return true end
+      local e = sf.entryCurrent
+      if e and e.x == cx and e.y == cy then return true end
+      if sf.forcedExit and inList(sf.forcedExit.coords, cx, cy) then return true end
+    end
+    return false
+  end
+
   local function blockedCell(state, p, cx, cy)
     if cx == p.cellX and cy == p.cellY then return nil end
     local why = cellVerdict(state, p, cx, cy)
+    if why == nil then
+      local okF, forced = pcall(forcedCell, state, p, cx, cy)
+      if okF and forced then why = "forced" end
+    end
     if not Runtime.wantsHook("movement.collision") then return why end
     local dx, dy = cx - p.cellX, cy - p.cellY
     local dir = (dx == 1 and "right") or (dx == -1 and "left")
@@ -113,10 +145,42 @@ function M.install()
   -- validates itself. Returns true when one took the frame over. The bonk is
   -- deliberately NOT restated: a free walk grazes rather than presses, and the
   -- wall stopping you is the feedback.
-  local function pushSpecials(state, dir, why)
+  -- start the engine's step (already begun) where the body stood along it
+  local function startAt(p, along)
+    if not (p.moving and along and along > 0) then return end
+    local stepLen = p.stepFramesCur or p.stepFrames or 16
+    p.progress = math.max(0, math.min(stepLen - 1, math.floor(along * stepLen / 16)))
+    local d = Collision.DELTA and Collision.DELTA[p.facing]
+    if d then
+      local adv = math.floor(p.progress * 16 / stepLen)
+      p.px = p.cellX * 16 + d[1] * adv
+      p.py = p.cellY * 16 + d[2] * adv
+    end
+  end
+
+  local function sideways(dir) return dir == "left" or dir == "right" end
+
+  local function pushSpecials(state, dir, why, along, perp)
     local p = state.player
     p.facing = dir
-    if why == "bounds" and state:checkEdgeExit(dir) then return true end
+    if why == "bounds" and state:checkEdgeExit(dir) then
+      -- a map connection: the engine parked the player one cell before the
+      -- landing cell mid-step; ride that step at the body's sideways offset
+      if p.moving and p.targetX then
+        startAt(p, along)
+        seam = { dir = dir, perp = perp or 0, tx = p.targetX, ty = p.targetY, player = p }
+      end
+      return true
+    end
+    if why == "forced" then
+      p.turnArmed = false
+      local result = p:tryMove(dir, state.map, state.entities)
+      if result == "moved" then
+        startAt(p, along)
+        return true
+      end
+      return false
+    end
     if state:checkLedgeHop(dir) then return true end
     if state:checkBoulderPush(dir) then return true end
     if why ~= "entity" and state:canCollisionWarp() and not p.surfing then
@@ -234,7 +298,32 @@ function M.install()
       why, dir = hitY, (vy > 0 and "down" or "up")
     end
     if why and math.max(math.abs(vx), math.abs(vy)) > 0.4 * pace then
-      if pushSpecials(state, dir, why) then
+      local sx = (dir == "right" and 1) or (dir == "left" and -1) or 0
+      local sy = (dir == "down" and 1) or (dir == "up" and -1) or 0
+      local cx, cz = p.cellX * 16 + 8, p.cellY * 16 + 8
+      if why == "forced" then
+        -- along the edge slides; a push (nearly) straight in lines the body
+        -- up with the cell, a glide, then hands the step to the engine
+        local side = math.abs(sx ~= 0 and dy or dx)
+        local sideHit
+        if sx ~= 0 then sideHit = hitY else sideHit = hitX end
+        if side > 0.38 and not sideHit then p.facing = facing; return end
+        local off = (sx ~= 0) and (cz - pos.z) or (cx - pos.x)
+        local step = math.min(math.abs(off), pace)
+        if sx ~= 0 then pos.z = pos.z + (off > 0 and step or -step)
+        else pos.x = pos.x + (off > 0 and step or -step) end
+        p.px = math.floor(pos.x - 8 + 0.5)
+        p.py = math.floor(pos.z - 8 + 0.5)
+        if V.subpixel then
+          V.subpixel.x, V.subpixel.y = (pos.x - 8) - p.px, (pos.z - 8) - p.py
+        end
+        lastPx, lastPy = p.px, p.py
+        if math.abs(off) - step > 0.05 then p.facing = facing; return end
+        if sx ~= 0 then pos.z = cz else pos.x = cx end
+      end
+      local along = (sx ~= 0) and (pos.x - cx) * sx or (pos.z - cz) * sy
+      local perp = (sx ~= 0) and (pos.z - cz) or (pos.x - cx)
+      if pushSpecials(state, dir, why, along, perp) then
         drop()
         return
       end
@@ -266,13 +355,59 @@ function M.install()
   -- would slide with it by up to half a game-pixel a frame. Handing the draw to
   -- the layer puts the player in its own unshifted canvas, between what was
   -- drawn before and after it, so it holds still on screen.
+  -- the seam, after the engine's own step update each frame: the sideways
+  -- offset back on the player (its fraction to the smooth scroll), and on
+  -- landing the body rebuilt at that offset
+  local function applySeam(p)
+    local s = seam
+    if not s or s.player ~= p then return end
+    if p.moving then
+      if p.targetX ~= s.tx or p.targetY ~= s.ty then seam = nil; return end
+      local whole = math.floor(s.perp + 0.5)
+      if sideways(s.dir) then
+        p.py = p.cellY * 16 + whole
+        if V.subpixel then V.subpixel.x, V.subpixel.y = 0, s.perp - whole end
+      else
+        p.px = p.cellX * 16 + whole
+        if V.subpixel then V.subpixel.x, V.subpixel.y = s.perp - whole, 0 end
+      end
+      V.layerSerial = (V.layerSerial or 0) + 1
+      layerPlayer = p
+      return
+    end
+    seam = nil
+    if p.cellX ~= s.tx or p.cellY ~= s.ty then return end
+    local x, z = p.cellX * 16 + 8, p.cellY * 16 + 8
+    if sideways(s.dir) then z = z + s.perp else x = x + s.perp end
+    pos = { x = x, z = z }
+    facing = p.facing
+    p.px = math.floor(pos.x - 8 + 0.5)
+    p.py = math.floor(pos.z - 8 + 0.5)
+    if V.subpixel then
+      V.subpixel.x, V.subpixel.y = (pos.x - 8) - p.px, (pos.z - 8) - p.py
+    end
+    lastPx, lastPy = p.px, p.py
+    V.layerSerial = (V.layerSerial or 0) + 1
+    layerPlayer = p
+  end
+
   local okPl, PlayerCls = pcall(require, "src.world.Player")
+  if okPl and type(PlayerCls) == "table" and type(PlayerCls.update) == "function"
+     and not PlayerCls.freeRoamUpdateHook then
+    local innerUpdate = PlayerCls.update
+    function PlayerCls:update(...)
+      local r1, r2 = innerUpdate(self, ...)
+      if seam and seam.player == self then pcall(applySeam, self) end
+      return r1, r2
+    end
+    PlayerCls.freeRoamUpdateHook = true
+  end
   if okPl and type(PlayerCls) == "table" and type(PlayerCls.draw) == "function"
      and not PlayerCls.freeRoamDrawHook then
     local innerDraw = PlayerCls.draw
     function PlayerCls:draw(...)
       local L = V.layer
-      if L and self == layerPlayer and pos and type(L.capture) == "function" then
+      if L and self == layerPlayer and (pos or seam) and type(L.capture) == "function" then
         local args = { n = select("#", ...), ... }
         return L.capture(function()
           return innerDraw(self, unpack(args, 1, args.n))

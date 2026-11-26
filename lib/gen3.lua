@@ -9,7 +9,8 @@
 --
 -- Two paths, chosen each frame:
 --
---   ON FOOT (walk, running shoes): a CONTINUOUS body, like the Gen 1 and Gen 2
+--   ON FOOT AND ON THE WATER (walk, running shoes, surf, dive): a CONTINUOUS
+--   body, like the Gen 1 and Gen 2
 --   arms. Native update runs with the d-pad blanked, so every gate still runs
 --   and nothing starts a step by itself; if native reached the pad read, the
 --   frame is ours. The heading times the engine's own pace (16 px over
@@ -21,13 +22,16 @@
 --   sprite's px/py are the body's, rounded to whole pixels.
 --
 --   Anything that is not a plain ordinary step is left to the engine whole:
---   ledges, stairs, warps, connections, boulder pushes and every other special
---   tryMove outcome drop the body and the native step takes over.
+--   ledges, stairs, warps, boulder pushes, forced tiles (ice, currents,
+--   spinners, slides), the hop off the surf blob and every other special
+--   tryMove outcome drop the body and the native step takes over -- lined up
+--   with the cell first, and started where the body already stood. A map
+--   connection keeps the body's sideways offset through the engine's seam
+--   step (see applySeam).
 --
---   BICYCLE, SURF, UNDERWATER and mid-hop: the RSE bike is a per-frame d-pad
---   state machine (Mach speed-up and slow-down, Acro button history), and
---   surf/dive steps carry their own state, so these keep the engine's native
---   step and steer its DIRECTION. update asserts the heading's dominant
+--   BICYCLE and mid-hop: the RSE bike is a per-frame d-pad state machine
+--   (Mach speed-up and slow-down, Acro button history), so it keeps the
+--   engine's native step and steers its DIRECTION. update asserts the heading's dominant
 --   cardinal; tryMove swaps in a digital-differential stepper's cardinal so a
 --   heading becomes an even staircase. The bicycle's speed is the engine's own.
 --
@@ -66,10 +70,12 @@ function M.install()
 
   local Collision = optional("src.core.game3.collision")
   local MapMod = optional("src.core.game3.map")
+  local ForcedMovement = optional("src.core.game3.forced_movement")
 
   local stepper = C.newStepper()
   local pendingHeading = nil      -- staircase path only: set around one update
   local body = nil                -- the one continuous foot body
+  local seam = nil                -- a map-connection step the body rides
 
   local function enabled()
     return V.option("enabled", true) ~= false
@@ -200,6 +206,28 @@ function M.install()
     return b
   end
 
+  -- A cell the engine would let the player into but must move them through
+  -- itself, on its own grid: ice, currents, spinners, slides, waterfalls,
+  -- muddy slopes and cracked floors ("forced"), and dry land seen from the
+  -- water ("dismount": the hop off the surf blob). The free body treats them
+  -- as a wall; a firm push hands the step to the engine.
+  local function specialCell(cx, cy)
+    if ForcedMovement and type(ForcedMovement.isForcedMovementTile) == "function"
+       and type(Collision.behavior) == "function" then
+      local okB, beh = pcall(Collision.behavior, cx, cy)
+      if okB and beh ~= nil then
+        local okF, forced = pcall(ForcedMovement.isForcedMovementTile, beh)
+        if okF and forced then return "forced" end
+      end
+    end
+    if Player.surfing and not Player.underwater
+       and type(Collision.isSurfDismount) == "function" then
+      local ok, d = pcall(Collision.isSurfDismount, cx, cy, Player.currentElevation)
+      if ok and d then return "dismount" end
+    end
+    return nil
+  end
+
   -- can the engine let the body into cell (cx, cy)? nil = yes, else the reason.
   -- A diagonal cell must be reachable by both of its cardinal approaches, so a
   -- blocked corner is never cut and one-way tiles are respected.
@@ -216,7 +244,7 @@ function M.install()
         elevation = Player.currentElevation,
       })
       if not ok then return "tile" end
-      if ent then return nil end
+      if ent then return specialCell(bx, by) end
       return why or "tile"
     end
     if cx ~= fx and cy ~= fy then
@@ -285,13 +313,89 @@ function M.install()
     write(b)
   end
 
-  -- a firm push into a wall: ask native once so its own verbs (ledge hop,
-  -- connection, boulder push, the collision sound) answer. A plain bump keeps
-  -- the engine's sound but must not lock the body in its bump animation.
-  local function pushWall(game, b, dir, run, input)
+  -- ---- the seam: a map-connection step keeps the body's line -------------
+  --
+  -- The engine crosses a map edge by loading the next map and parking the
+  -- player one cell before the landing cell, mid-step, on the grid. The body
+  -- was off the grid line, so riding that step as-is put the sprite back on
+  -- a gridline the moment the route began. The seam keeps the body's
+  -- sideways offset on the player for the whole step (and its fraction on
+  -- the smooth scroll), starts the step where the body already stood along
+  -- it, and rebuilds the body on landing at the same offset.
+  local function sideways(dir) return dir == "left" or dir == "right" end
+
+  local function applySeam(game)
+    local s = seam
+    if not s then return end
+    if Player.moving then
+      if Player.targetX ~= s.tx or Player.targetY ~= s.ty then seam = nil; return end
+      local whole = math.floor(s.perp + 0.5)
+      if sideways(s.dir) then
+        Player.py = Player.cellY * CELL + whole
+        setSubpixel(0, s.perp - whole)
+      else
+        Player.px = Player.cellX * CELL + whole
+        setSubpixel(s.perp - whole, 0)
+      end
+      markDriven()
+      return
+    end
+    seam = nil
+    if Player.cellX ~= s.tx or Player.cellY ~= s.ty then setSubpixel(0, 0); return end
+    -- land at the same sideways offset, unless the new map walls that side
+    -- in closer than the body's radius allows
+    local perp = s.perp
+    local limit = CELL / 2 - RADIUS - C.EPS
+    if math.abs(perp) > limit then
+      local side = perp > 0 and 1 or -1
+      local nx, ny = Player.cellX, Player.cellY
+      if sideways(s.dir) then ny = ny + side else nx = nx + side end
+      if blockedCell(game, nx, ny) then perp = side * limit end
+    end
+    local x, z = Player.cellX * CELL + 8, Player.cellY * CELL + 8
+    if sideways(s.dir) then z = z + perp else x = x + perp end
+    body = { map = currentMap(), x = x, z = z, clock = 0, cooldown = 0 }
+    write(body)
+    markDriven()
+  end
+
+  -- A firm push into a wall: ask native once so its own verbs (ledge hop,
+  -- connection, boulder push, forced tiles, the hop off the surf blob, the
+  -- collision sound) answer. A move the engine carries on its own grid first
+  -- lines the body up with the cell (a glide, never a jump), and the engine's
+  -- step then starts where the body already stands along it.
+  local LINE_UP_SIDEWAYS = 0.38   -- a heading this far off the push only slides
+
+  local function pushWall(game, b, dir, run, input, pace, hx, hz, sideBlocked)
     local dx = (dir == "right" and 1) or (dir == "left" and -1) or 0
     local dz = (dir == "down" and 1) or (dir == "up" and -1) or 0
-    if not blockedCell(game, Player.cellX + dx, Player.cellY + dz) then return false end
+    local why = blockedCell(game, Player.cellX + dx, Player.cellY + dz)
+    if not why then return false end
+    local ledge = false
+    if why ~= "forced" and why ~= "dismount" and type(Collision.ledgeLanding) == "function" then
+      local ok, lx = pcall(Collision.ledgeLanding, game, Player.cellX, Player.cellY, dir)
+      ledge = ok and lx ~= nil
+    end
+    local cx, cz = Player.cellX * CELL + 8, Player.cellY * CELL + 8
+    if why == "forced" or why == "dismount" or ledge then
+      -- a heading that runs along the edge slides along it; only a push
+      -- (nearly) straight in, or into a corner, takes the engine's move
+      local side = math.abs((dx ~= 0) and (hz or 0) or (hx or 0))
+      if side > LINE_UP_SIDEWAYS and not sideBlocked then return false end
+      local off = (dx ~= 0) and (cz - b.z) or (cx - b.x)
+      local step = math.min(math.abs(off), pace or 1)
+      if dx ~= 0 then b.z = b.z + (off > 0 and step or -step)
+      else b.x = b.x + (off > 0 and step or -step) end
+      if step > 0 then
+        b.moving = true
+        b.clock = b.clock + step * (b.animRate or 1)
+        write(b)
+      end
+      if math.abs(off) - step > 0.05 then return false end
+      if dx ~= 0 then b.z = cz else b.x = cx end
+    end
+    local along = (dx ~= 0) and (b.x - cx) * dx or (b.z - cz) * dz
+    local perp = (dx ~= 0) and (b.z - cz) or (b.x - cx)
     b.cooldown = PUSH_COOLDOWN
     local kind, result = attempt(game, dir, run, input)
     if kind == nil then
@@ -301,6 +405,27 @@ function M.install()
       return false
     end
     dropBody(false)       -- native took it (special, or admitted what we refused)
+    if Player.moving then
+      -- start the engine's step (or hop) where the body already stood along
+      -- it, so it never steps back to the cell's edge first
+      local frames = Player.stepFrames or 16
+      local span = math.max(1, math.abs((Player.targetX or Player.cellX) - Player.cellX),
+        math.abs((Player.targetY or Player.cellY) - Player.cellY))
+      if along > 0 then
+        Player.progress = math.max(0, math.min(frames - 1,
+          math.floor(along * frames / (CELL * span))))
+        -- and draw it there this frame too (the engine's own interpolation)
+        local adv = math.floor(Player.progress * CELL * span / frames)
+        local sx = ((Player.targetX or Player.cellX) - Player.cellX) / span
+        local sy = ((Player.targetY or Player.cellY) - Player.cellY) / span
+        Player.px = Player.cellX * CELL + sx * adv
+        Player.py = Player.cellY * CELL + sy * adv
+      end
+      if result == "connection" and not Player.jumping and not Player.dismounting then
+        seam = { dir = dir, perp = perp, tx = Player.targetX, ty = Player.targetY }
+        applySeam(game)
+      end
+    end
     return true, result
   end
 
@@ -381,16 +506,20 @@ function M.install()
         dir, comp = dz > 0 and "down" or "up", math.abs(hz)
       end
       if dir and comp >= PUSH_COMPONENT then
-        pushWall(game, b, dir, run, input)
+        local sideHit
+        if dir == "right" or dir == "left" then sideHit = hitZ else sideHit = hitX end
+        pushWall(game, b, dir, run, input, pace, hx, hz, sideHit ~= nil)
       end
     end
   end
 
   -- ---- the foot frame ------------------------------------------------------
 
+  -- the free body walks, runs, surfs and dives; the bicycle (a per-frame
+  -- d-pad state machine) and the hops on and off the surf blob stay native
   local function footMode()
-    return not (Player.biking or Player.surfing or Player.underwater
-      or Player.surfHopping or Player.dismounting or Player.jumping)
+    return not (Player.biking or Player.surfHopping or Player.dismounting
+      or Player.jumping)
   end
 
   local function footFrame(game, input, hx, hz)
@@ -399,6 +528,12 @@ function M.install()
     local feed
     if hx then feed = blankDirs(input, onPoll) else feed = spyDirs(input, onPoll) end
     local result = innerUpdate(game, feed)
+
+    -- riding a map-connection step: keep the body's line, nothing else
+    if seam then
+      applySeam(game)
+      return result
+    end
 
     if not hx then
       -- nothing held: native ran the real pad. A body that was landing resumes.
@@ -450,6 +585,7 @@ function M.install()
     local hx, hz = headingOf(input)
 
     if not footMode() then
+      seam = nil
       if body then dropBody(true) end
       setSubpixel(0, 0)
       if not hx then
@@ -513,13 +649,20 @@ function M.install()
   -- canvas the smooth scroll shifts; handing the player's own draw to the layer
   -- keeps it fixed on screen while everything before and after it (roofs, tall
   -- grass over the feet, NPCs) stays glued to the scrolling world.
+  -- the player's sprite is drawn at its px/py plus the sprite offsets (the
+  -- surf bob, a field-move nudge)
+  local function isPlayerAt(px, py)
+    local xo, yo = Player.spriteXOffset or 0, Player.spriteYOffset or 0
+    return (px == Player.px or px == Player.px + xo)
+      and (py == Player.py or py == Player.py + yo)
+  end
+
   local OwSprites = optional("src.core.game3.ow_sprites")
   if OwSprites and type(OwSprites.draw) == "function" and not OwSprites.freeRoamDrawHook then
     local innerOw = OwSprites.draw
     OwSprites.draw = function(graphicsId, px, py, ...)
       local L = V.layer
-      if L and body and type(L.capture) == "function"
-         and px == Player.px and py == Player.py then
+      if L and (body or seam) and type(L.capture) == "function" and isPlayerAt(px, py) then
         local args = { n = select("#", ...), ... }
         return L.capture(function()
           return innerOw(graphicsId, px, py, unpack(args, 1, args.n))
@@ -528,6 +671,42 @@ function M.install()
       return innerOw(graphicsId, px, py, ...)
     end
     OwSprites.freeRoamDrawHook = true
+  end
+  -- the same for the fallback sprite renderer the field view uses when the
+  -- GBA overworld sprites are not ready: the player must be held still on
+  -- either path, or the whole frame (player included) slides by the
+  -- sub-pixel and the world appears to jitter around a wobbling player
+  local SpriteRenderer = optional("src.render.SpriteRenderer")
+  if SpriteRenderer and type(SpriteRenderer.draw) == "function"
+     and not SpriteRenderer.freeRoamDrawHook then
+    local innerSr = SpriteRenderer.draw
+    SpriteRenderer.draw = function(self, px, py, ...)
+      local L = V.layer
+      if L and (body or seam) and type(L.capture) == "function" and isPlayerAt(px, py) then
+        local args = { n = select("#", ...), ... }
+        return L.capture(function()
+          return innerSr(self, px, py, unpack(args, 1, args.n))
+        end)
+      end
+      return innerSr(self, px, py, ...)
+    end
+    SpriteRenderer.freeRoamDrawHook = true
+  end
+  -- the surf blob rides under the player: held still with it, or it would
+  -- slide under the steady sprite by the sub-pixel every frame
+  local FieldEffects = optional("src.core.game3.field_effects")
+  if FieldEffects and type(FieldEffects.drawSurfBlob) == "function"
+     and not FieldEffects.freeRoamBlobHook then
+    local innerBlob = FieldEffects.drawSurfBlob
+    FieldEffects.drawSurfBlob = function(...)
+      local L = V.layer
+      if L and (body or seam) and type(L.capture) == "function" then
+        local args = { n = select("#", ...), ... }
+        return L.capture(function() return innerBlob(unpack(args, 1, args.n)) end)
+      end
+      return innerBlob(...)
+    end
+    FieldEffects.freeRoamBlobHook = true
   end
 
   Player.freeRoamHook = true

@@ -58,6 +58,12 @@ end
 -- The resolved heading: stick first when analog is on and deflected, else keys.
 function C.heading(input, o)
   o = o or {}
+  -- the on-screen d-pad in DIAGONAL / 360 mode (lib/touch) wins while a
+  -- finger is on it
+  if C.touchHeading then
+    local tx, ty = C.touchHeading()
+    if tx then return tx, ty end
+  end
   if o.analog ~= false then
     local sx, sy = C.stickHeading(input, o.dead)
     if sx then return sx, sy end
