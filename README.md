@@ -44,9 +44,10 @@ In the Mod Manager (`F10`) → **Free Roam** → **OPTIONS**.
 | `STICK 360` | ON / OFF | ON: the left stick moves you in any direction. OFF: the stick acts like a d-pad (eight directions, or four with KEY DIAGONALS off). |
 | `KEY DIAGONALS` | ON / OFF | ON: holding two directions on the keys or d-pad walks a true diagonal. OFF: keys and d-pad go four ways only, but you still move freely between tiles rather than snapping to the grid. |
 | `TOUCHPAD` | DEFAULT / DIAGONAL / 360 | The on-screen d-pad on phones and tablets. DEFAULT: the game's own four directions. DIAGONAL: your thumb's angle picks one of eight directions. 360: you walk exactly where your thumb points, like a stick. Speed never depends on how far you push. |
+| `TRUE PACE` | OFF / ON | ON: walking and running are a third slower (a tile takes 24 frames walking instead of 16, and 12 running instead of 8). A follower Pokémon slows to stay in step. The bicycle and surfing keep their normal speed. |
 
 `FREE ROAM`, `STICK 360` and `KEY DIAGONALS` start ON; `TOUCHPAD` starts on
-DEFAULT. Menus and everything else still read the d-pad the normal way.
+DEFAULT; `TRUE PACE` starts OFF. Menus and everything else still read the d-pad the normal way.
 
 ## How it works
 

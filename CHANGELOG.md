@@ -3,6 +3,39 @@
 Format: [keep a changelog](https://keepachangelog.com/en/1.1.0/).
 Version headings match `manifest.json`'s `version`.
 
+## [0.5.21] - 2026-11-26
+
+### Added
+- **TRUE PACE now slows a follower Pokémon to match** (Yellow's Pikachu,
+  or a follower mod such as Vivid Worlds OG or Wilds of Hoenn). Every generation's
+  follower walks each tile over the player's step length, so with TRUE
+  PACE on it takes 24 frames a tile (12 behind the running shoes, and half
+  that while catching up) instead of stepping at the normal speed and then
+  waiting for you. It is only handed the slower length for its own update;
+  your own step length is put straight back, and the follower's position is
+  never touched. On Gen 1 its legs are slowed to match, the same as yours.
+
+## [0.5.2] - 2026-11-26
+
+### Added
+- **TRUE PACE option** (OFF / ON, starts OFF). ON slows walking and running
+  to two thirds of the game's own pace, on all 11 games: a tile takes 24
+  frames walking instead of 16, and 12 with Gen 3's running shoes instead
+  of 8. The bicycle, surfing and diving keep their normal speed.
+- Why two thirds rather than a round percentage: it is the slowdown that
+  keeps every on-foot speed on a short, exact pixel rhythm (walking moves
+  1, 1, 0 pixels over each three frames; running 1, 1, 2), and every tile
+  takes the same whole number of frames. So each step's landing (grass,
+  encounters, step events) falls at the same point every time, and nothing
+  drawn at whole pixels picks up an uneven shimmer.
+- The walk animation slows with the body on Gen 1 and Gen 2, whose leg
+  cycle runs on a per-frame clock, so the legs never pump faster than the
+  player moves. Gen 3's legs already follow distance walked.
+- Adding two thirds frame after frame drifts a hair short of a whole
+  number in floating point, which would let a tile line or a leg tick slip
+  a frame late now and then. Values within that rounding dust of a whole
+  number are snapped back onto it, so the rhythm stays exact.
+
 ## [0.5.1] - 2026-11-26
 
 ### Fixed

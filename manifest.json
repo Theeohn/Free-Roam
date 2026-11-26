@@ -1,7 +1,7 @@
 {
   "id": "Free-Roam",
   "name": "Free Roam",
-  "version": "0.5.1",
+  "version": "0.5.21",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",

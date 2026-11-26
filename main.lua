@@ -80,6 +80,7 @@ mod.options:define({
   { key = "diagonals", label = "KEY DIAGONALS", type = "toggle", default = true },
   { key = "touchpad",  label = "TOUCHPAD",      type = "choice", default = "default",
     choices = { { "DEFAULT", "default" }, { "DIAGONAL", "diagonal" }, { "360", "360" } } },
+  { key = "truePace",  label = "TRUE PACE",     type = "toggle", default = false },
 })
 
 function V.option(key, default)
@@ -146,7 +147,7 @@ if not okScroll and mod.log then
 end
 
 -- ------- exports (uniform across arms)
-mod.exports.version = "0.5.1"
+mod.exports.version = "0.5.21"
 mod.exports.generation = V.generation
 mod.exports.active = function()
   return V.option("enabled", true) ~= false and arm.active ~= nil and arm.active()

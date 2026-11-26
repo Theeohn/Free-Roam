@@ -19,6 +19,7 @@ return {
       "STICK 360: ON / OFF -- OFF makes the stick act like a d-pad",
       "KEY DIAGONALS: ON / OFF -- OFF limits keys and d-pad to four ways, still off-grid",
       "TOUCHPAD: DEFAULT / DIAGONAL / 360 -- the phone on-screen d-pad as four, eight or any direction",
+      "TRUE PACE: OFF / ON -- ON walks and runs a third slower (24 frames a tile walking, 12 running) on all 11 games, and a follower Pokemon slows to stay in step; the bicycle and surf keep their speed",
     },
     known = {
       "Gen 3 bicycle still steps a tile at a time (any direction works, as a zig-zag)",
