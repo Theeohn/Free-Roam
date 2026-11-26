@@ -81,9 +81,6 @@ were walking, rather than putting you back on a tile line.
   along it; push straight in to jump or land.
 - Mods that change collision (such as a walk-through-walls cheat) work with the
   free walk the same way they work with the normal one.
-- Works alongside [WoobleView](https://github.com/poooooby/gen3-hd-sprites)'s
-  sharp overworld sprites (as used by Wilds of Hoenn): its Pokémon, followers
-  and people scroll smoothly with the world.
 - If anything looks wrong, set `FREE ROAM` to OFF. The normal walk returns on
   the next frame.
 
